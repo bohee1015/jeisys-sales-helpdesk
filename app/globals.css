@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/*
+  디자인 기준: 사내 영업지도 서비스 JMAP과 통일한다.
+  Jeisys 네이비(#1f3a93)가 주색이고, 옐로(#f5a623)는 포인트에만 쓴다.
+  배경은 옅은 회보라(#f1f2f7), 입력창은 테두리 대신 옅은 블루(#edf1fa) 채움.
+*/
+
+:root {
+  --background: #f1f2f7;
+  --surface: #ffffff;
+  --foreground: #1b2233;
+  --color-primary: #1f3a93;
+  --color-primary-hover: #182f77;
+  --color-accent: #f5a623;
+  --color-secondary: #10b981;
+  --color-secondary-hover: #0d9c6f;
+  --color-tertiary: #edf1fa;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-accent: var(--color-accent);
+  --color-secondary: var(--color-secondary);
+  --color-secondary-hover: var(--color-secondary-hover);
+  --color-tertiary: var(--color-tertiary);
+  --font-sans: var(--font-pretendard), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SFMono-Regular", Consolas, monospace;
+  --font-serif: "Times New Roman", Times, Georgia, serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0d1220;
+    --surface: #151c2e;
+    --foreground: #e8ebf2;
+    --color-tertiary: #1e2740;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+@layer components {
+  /* 주 행동(전송, 로그인, 저장 등)에만 쓰는 강조 버튼 — 절제된 색 사용을 위해 남용하지 않는다. */
+  .btn-primary {
+    @apply rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white transition
+      hover:bg-primary-hover active:translate-y-px disabled:opacity-40 disabled:active:translate-y-0;
+  }
+
+  /* 완료/긍정 확인처럼 성공 의미를 가지는 행동에만 쓰는 버튼. */
+  .btn-success {
+    @apply rounded-lg bg-secondary px-3.5 py-1.5 text-sm font-semibold text-white transition
+      hover:bg-secondary-hover active:translate-y-px disabled:opacity-40 disabled:active:translate-y-0;
+  }
+
+  /* JMAP과 동일하게 테두리 대신 옅은 블루로 채운 입력창. */
+  .input-field {
+    @apply rounded-lg border border-transparent bg-tertiary px-3 py-2.5 text-sm text-slate-900
+      outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/15
+      dark:bg-[#1e2740] dark:text-slate-100;
+  }
+
+  .card {
+    @apply rounded-xl border border-slate-200/70 bg-surface shadow-[0_2px_12px_rgba(27,34,51,0.06)]
+      dark:border-slate-800 dark:bg-surface;
+  }
+
+  /* Jeisys 워드마크 — 로고 이미지가 준비되면 이 자리를 이미지로 교체한다. */
+  .wordmark {
+    font-family: var(--font-serif);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 480ms ease-out both;
+}

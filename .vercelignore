@@ -1,0 +1,16 @@
+# Vercel CLI 배포 시 업로드에서 제외할 파일.
+# 이 파일이 있으면 Vercel은 .gitignore 대신 이 목록을 쓴다.
+# 견적서 양식(templates/*.xlsx)은 공개 저장소에서는 빠져 있지만 배포에는 필요하므로 여기서 제외하지 않는다.
+
+.env*
+.git
+node_modules
+.next
+.vercel
+.bkit
+.claude
+data
+uploads
+trash-can
+supabase/.temp
+*.tsbuildinfo
