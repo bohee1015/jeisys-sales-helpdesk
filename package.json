@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:nlp": "node scripts/check-nlp.cjs",
+    "check:keywords": "node scripts/check-keywords.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

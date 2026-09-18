@@ -35,13 +35,15 @@ function deriveTitle(message: string): string {
  */
 export function extractAllFields(
   subcategory: Subcategory,
-  message: string
+  message: string,
+  /** 날짜 계산의 기준일. 테스트에서 고정하기 위해 받는다. */
+  reference: Date = new Date()
 ): Record<string, string> {
   const clientName = extractClientName(message);
   const result: Record<string, string> = {};
 
   // 데모 신규등록은 문장에 등장하는 순서대로 설치일 → 회수일로 짝지어 찾는다.
-  const [installDatetime, recoveryDatetime] = extractDatetimePair(message);
+  const [installDatetime, recoveryDatetime] = extractDatetimePair(message, reference);
 
   for (const field of subcategory.fields) {
     let value: string | null = null;
@@ -83,7 +85,7 @@ export function extractAllFields(
         case "neededBy":
         case "changeDate":
         case "recoveryDate":
-          value = extractDate(message);
+          value = extractDate(message, reference);
           break;
         case "installDatetime":
           value = installDatetime;

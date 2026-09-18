@@ -71,7 +71,12 @@ export default function RequestChat({ onRequestUpdated }: { onRequestUpdated?: (
     const data = await response.json();
     if (!response.ok) throw new Error(data.error ?? "요청 처리에 실패했습니다.");
     return data as
-      | { kind: "need_category_pick"; botReply: string; originalMessage: string }
+      | {
+          kind: "need_category_pick";
+          botReply: string;
+          originalMessage: string;
+          suggestedCategoryId: string | null;
+        }
       | { kind: "request"; botReply: string; request: HelpdeskRequest }
       | { kind: "requests"; botReply: string; requests: HelpdeskRequest[] };
   }
@@ -79,7 +84,11 @@ export default function RequestChat({ onRequestUpdated }: { onRequestUpdated?: (
   function handleResult(result: Awaited<ReturnType<typeof callChatApi>>) {
     if (result.kind === "need_category_pick") {
       addMessage("bot", result.botReply);
-      setCategoryPick({ originalMessage: result.originalMessage, categoryId: null });
+      // 대분류가 짚였으면 소분류 선택 단계부터 시작한다 (전부 다시 고르지 않게).
+      setCategoryPick({
+        originalMessage: result.originalMessage,
+        categoryId: result.suggestedCategoryId ?? null,
+      });
       setRequestId(null);
       return;
     }
@@ -291,6 +300,14 @@ export default function RequestChat({ onRequestUpdated }: { onRequestUpdated?: (
                   {s.label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => categoryPick && setCategoryPick({ ...categoryPick, categoryId: null })}
+                disabled={isSending}
+                className="rounded-full px-3.5 py-1.5 text-sm text-slate-400 underline-offset-2 transition hover:text-primary hover:underline disabled:opacity-50"
+              >
+                다른 업무예요
+              </button>
             </div>
           )}
 

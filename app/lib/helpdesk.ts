@@ -1,7 +1,8 @@
 import { findSubcategory, type FieldSpec } from "./categories";
 import { containsPersonalInfo } from "./classifier";
 import { extractAllFields, findFirstMissingField } from "./fieldExtraction";
-import { classifyMultipleSubcategories, classifySubcategory } from "./nlp";
+import { classifyMultipleSubcategories, classifySubcategory, suggestCategory } from "./nlp";
+import { CATEGORIES } from "./categories";
 import { createRequest, getRequest, updateRequest } from "./store";
 import type { ChatTurn, HelpdeskRequest, RequestStatus } from "./types";
 import { parseYesNo } from "./yesNo";
@@ -44,7 +45,13 @@ export type ChatInput = {
 };
 
 export type ChatResult =
-  | { kind: "need_category_pick"; botReply: string; originalMessage: string }
+  | {
+      kind: "need_category_pick";
+      botReply: string;
+      originalMessage: string;
+      /** 대분류만은 분명할 때 — 요청자는 소분류만 고르면 된다 */
+      suggestedCategoryId: string | null;
+    }
   | { kind: "request"; botReply: string; request: HelpdeskRequest }
   | { kind: "requests"; botReply: string; requests: HelpdeskRequest[] };
 
@@ -63,6 +70,7 @@ async function startNewRequest(
       kind: "need_category_pick",
       botReply: "분류를 다시 선택해 주세요.",
       originalMessage: text,
+      suggestedCategoryId: null,
     };
   }
   const { category, subcategory } = found;
@@ -267,10 +275,15 @@ export async function handleChatMessage(input: ChatInput): Promise<ChatResult> {
 
   const classified = classifySubcategory(trimmed);
   if (!classified) {
+    const suggestedCategoryId = suggestCategory(trimmed);
+    const suggested = CATEGORIES.find((c) => c.id === suggestedCategoryId);
     return {
       kind: "need_category_pick",
-      botReply: "어떤 업무에 대한 요청인지 확인이 필요합니다. 아래에서 선택해 주세요.",
+      botReply: suggested
+        ? `'${suggested.label}' 관련 요청으로 보입니다. 어떤 업무인지 아래에서 선택해 주세요.`
+        : "어떤 업무에 대한 요청인지 확인이 필요합니다. 아래에서 선택해 주세요.",
       originalMessage: trimmed,
+      suggestedCategoryId: suggested?.id ?? null,
     };
   }
 

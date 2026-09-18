@@ -1,22 +1,31 @@
 // 자연어 문장에서 필수값을 최대한 추출하는 규칙 기반 로직. LLM 없이 정규식/키워드로 처리하므로
 // 완벽하지 않다 — 못 찾으면 null을 반환해 챗봇이 다시 물어보게 한다.
 
+import { CATEGORIES } from "./categories";
+
 const CLINIC_SUFFIX = /[\p{L}0-9]{1,6}(?:의원|병원|피부과|외과|내과|한의원|클리닉)/u;
 
+// 장비(대수로 세는 것)와 그 외 품목(개·부로 세는 것)
+const EQUIPMENT_KEYWORDS = ["덴서티", "포텐자", "리니어지", "볼뉴머", "트라이빔", "느와르", "누아르"];
+
+// 긴 이름을 앞에 둔다 — "미니배너"가 "배너"보다 먼저 잡혀야 한다.
 const PRODUCT_KEYWORDS = [
-  "덴서티",
-  "포텐자",
-  "리니어지",
-  "느와르",
-  "누아르",
+  ...EQUIPMENT_KEYWORDS,
   "알파팁",
-  "명패",
-  "바인더",
-  "배너",
+  "리플릿거치대",
+  "리플렛거치대",
+  "미니배너거치대",
+  "배너거치대",
   "미니배너",
+  "마킹페이퍼",
+  "인증카드",
+  "카트리지",
   "리플릿",
   "리플렛",
-  "인증카드",
+  "바인더",
+  "배너",
+  "명패",
+  "거치대",
 ];
 
 // "덴서티"/"리니어지" 등 기본 장비명 뒤에 모델명(하이, 누아르, 느와르 등)이나
@@ -24,30 +33,27 @@ const PRODUCT_KEYWORDS = [
 // 붙어 있으면 함께 잡는다.
 const PRODUCT_VARIANTS = ["하이", "누아르", "느와르", "베이직", "코어", "컨투어", "팁", "카트리지"];
 
-// 병원명 뒤에 오는 다음 단어가 지점명(예: "용인", "검단점")이 아니라 품목명/업무 용어일 수 있어 제외한다.
-const BRANCH_STOPWORDS = new Set([
-  "등록",
-  "설치",
-  "회수",
-  "요청",
-  "부탁",
-  "확인",
-  "문의",
-  "출고",
-  "발송",
-  "변경",
-  "선출고",
-  "기안완료",
-  "계산서",
-  "크레딧",
-  "크래딧",
-  "리스",
-  "무이자",
-  "확보",
-  "납품일정",
-  "납품일",
-  ...PRODUCT_KEYWORDS,
-]);
+const KOREAN_NUMERALS: Record<string, number> = { 한: 1, 하나: 1, 두: 2, 세: 3, 네: 4, 다섯: 5 };
+
+// 병원명 뒤에 오는 단어를 지점명으로 볼지 판단할 때 제외하는 말들.
+// 분류 키워드는 categories.ts에서 자동으로 가져오므로 키워드를 추가해도 여기를 같이 고칠 필요가 없다.
+const REQUEST_WORDS = [
+  "등록", "설치", "회수", "요청", "부탁", "확인", "문의", "출고", "발송", "변경", "수정", "취소",
+  "잡아", "보내", "빼", "넣어", "올려", "견적", "계약", "납품", "주문", "보상", "팁", "장비",
+  "원장", "원장님", "수수료", "채권", "리스", "데모", "판촉물", "소모품", "크레딧", "크래딧",
+  "무이자", "확보", "재고", "기안", "기안완료", "계산서", "포텐자", "덴서티", "리플릿", "리플렛",
+];
+
+const KEYWORD_FIRST_TOKENS = CATEGORIES.flatMap((c) =>
+  c.subcategories.flatMap((s) => (s.keywords ?? []).map((k) => k.split(/\s+/)[0]))
+);
+
+const BRANCH_STOPWORDS = new Set([...REQUEST_WORDS, ...PRODUCT_KEYWORDS, ...KEYWORD_FIRST_TOKENS]);
+
+/** 지점명처럼 보이는 단어인지 — "용인", "검단점", "성남신흥점" 같은 짧은 지명이나 행정구역 접미어. */
+function looksLikeBranch(token: string): boolean {
+  return /(점|동|구|시|군|읍|면|역|지점|본점)$/u.test(token) || token.length <= 3;
+}
 
 /** 거래처명(병원명)을 추출한다. 병원 접미어 뒤 짧은 지점명(예: "용인", "검단점")까지 함께 잡는다. */
 export function extractClientName(message: string): string | null {
@@ -65,7 +71,7 @@ export function extractClientName(message: string): string | null {
     nextTokenMatch !== null &&
     (nextToken?.includes("원장") || /^\s?원장/u.test(rest.slice(nextTokenMatch[0].length)));
 
-  if (nextToken && !BRANCH_STOPWORDS.has(nextToken) && !isDirectorName) {
+  if (nextToken && looksLikeBranch(nextToken) && !BRANCH_STOPWORDS.has(nextToken) && !isDirectorName) {
     return `${clinic} ${nextToken}`;
   }
   return clinic;
@@ -114,25 +120,67 @@ export function extractDirectorName(message: string): string | null {
   return null;
 }
 
-/** 품목명(+모델명, 가능하면 수량)을 추출한다. */
-export function extractProductPhrase(message: string): string | null {
-  for (const keyword of PRODUCT_KEYWORDS) {
-    const idx = message.indexOf(keyword);
-    if (idx === -1) continue;
+type ProductHit = { index: number; keyword: string };
 
-    let phrase = keyword;
-    let cursor = idx + keyword.length;
+function findProductHits(message: string): ProductHit[] {
+  const hits: ProductHit[] = [];
+  for (const keyword of PRODUCT_KEYWORDS) {
+    let from = 0;
+    while (true) {
+      const index = message.indexOf(keyword, from);
+      if (index === -1) break;
+      hits.push({ index, keyword });
+      from = index + keyword.length;
+    }
+  }
+  // 같은 자리에서 시작하면 긴 이름("미니배너")이 짧은 이름("배너")보다 먼저 오게 한다.
+  return hits.sort((a, b) => a.index - b.index || b.keyword.length - a.keyword.length);
+}
+
+/** 품목 뒤 12글자 안의 수량. "10부", "1대"는 물론 "한 대", "하나"도 읽는다. */
+function readQuantity(window: string, isEquipment: boolean): { text: string; length: number } | null {
+  const digits = window.match(/(\d+)\s*(개|부|대|장|매|세트|박스|ea)/i);
+  if (digits) return { text: `${digits[1]}${digits[2]}`, length: (digits.index ?? 0) + digits[0].length };
+
+  const numeral = window.match(/(한|하나|두|세|네|다섯)\s*(대|개|부|장)?/u);
+  if (numeral && (numeral[2] || numeral[1] === "하나")) {
+    const unit = numeral[2] ?? (isEquipment ? "대" : "개");
+    return { text: `${KOREAN_NUMERALS[numeral[1]]}${unit}`, length: (numeral.index ?? 0) + numeral[0].length };
+  }
+  return null;
+}
+
+/**
+ * 품목명(+모델명, 가능하면 수량)을 추출한다. 여러 품목이 나오면 등장 순서대로 ", "로 잇는다
+ * (예: "리플릿 10부, 배너 1개").
+ */
+export function extractProductPhrase(message: string): string | null {
+  const phrases: string[] = [];
+  let consumedUntil = -1;
+
+  for (const hit of findProductHits(message)) {
+    if (hit.index < consumedUntil) continue;
+
+    let phrase = hit.keyword;
+    let cursor = hit.index + hit.keyword.length;
+
     const variantMatch = message.slice(cursor, cursor + 6).match(/^\s*([\p{L}]{1,4})/u);
     if (variantMatch && PRODUCT_VARIANTS.includes(variantMatch[1])) {
       phrase += ` ${variantMatch[1]}`;
       cursor += variantMatch[0].length;
     }
 
-    const window = message.slice(cursor, cursor + 12);
-    const qtyMatch = window.match(/\d+\s*(개|부|대|장|매|세트|박스)/);
-    return qtyMatch ? `${phrase} ${qtyMatch[0]}`.trim() : phrase;
+    const quantity = readQuantity(message.slice(cursor, cursor + 12), EQUIPMENT_KEYWORDS.includes(hit.keyword));
+    if (quantity) {
+      phrase += ` ${quantity.text}`;
+      cursor += quantity.length;
+    }
+
+    phrases.push(phrase);
+    consumedUntil = cursor;
   }
-  return null;
+
+  return phrases.length > 0 ? phrases.join(", ") : null;
 }
 
 /**
@@ -194,6 +242,14 @@ function rollToFutureYear(month: number, day: number, reference: Date): Date {
   return candidate;
 }
 
+/** 월 없이 "23일로"라고만 쓰면 이번 달로 보고, 이미 지난 날짜면 다음 달로 본다. */
+function dayOfCurrentOrNextMonth(day: number, reference: Date): Date {
+  const candidate = new Date(reference.getFullYear(), reference.getMonth(), day);
+  const today = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());
+  if (candidate < today) candidate.setMonth(candidate.getMonth() + 1);
+  return candidate;
+}
+
 /** "다음주 X요일" — 다음 주(월요일 시작)의 해당 요일. 목요일 기준 "다음주 화요일"은 5일 뒤다. */
 function weekdayOfNextWeek(reference: Date, targetDow: number): Date {
   const result = new Date(reference);
@@ -203,6 +259,9 @@ function weekdayOfNextWeek(reference: Date, targetDow: number): Date {
   result.setDate(result.getDate() + (7 - daysSinceMonday) + targetFromMonday);
   return result;
 }
+
+// "23일"처럼 월 없는 날짜. "일정/일자/일시"의 "일"이나 "13시"는 제외한다.
+const BARE_DAY = /(?<!\d)(\d{1,2})\s*일(?![정자시\d])/;
 
 /** 문장에서 날짜 하나를 찾아 YYYY-MM-DD로 반환한다. 상대 표현(다음주 화요일, 내일 등)도 처리한다. */
 export function extractDate(message: string, reference: Date = new Date()): string | null {
@@ -239,13 +298,22 @@ export function extractDate(message: string, reference: Date = new Date()): stri
     return toIsoDate(d);
   }
 
+  const bareDay = message.match(BARE_DAY);
+  if (bareDay) {
+    const day = Number(bareDay[1]);
+    if (day >= 1 && day <= 31) return toIsoDate(dayOfCurrentOrNextMonth(day, reference));
+  }
+
   return null;
 }
 
 // "오후 3시"처럼 오전/오후가 붙는 표기가 실제 요청에 많아, 이를 무시하면 오후 시각이
 // 오전 시각으로 잘못 기록된다 (예: "오후 3시" → 03:00으로 오추출되던 문제).
+// 분 자리의 숫자가 "9월"의 9처럼 날짜의 일부면 분으로 보지 않는다 ("오후 3시 9월 25일" → 15:00).
+const TIME_PATTERN = /(오전|오후)?\s*(\d{1,2})\s*[:시]\s*(?:(\d{1,2})(?![\d월일/]))?\s*분?/;
+
 function extractTime(text: string): string | null {
-  const match = text.match(/(오전|오후)?\s*(\d{1,2})\s*[:시]\s*(\d{1,2})?\s*분?/);
+  const match = text.match(TIME_PATTERN);
   if (!match) return null;
   let hour = Math.min(23, Number(match[2]));
   const minute = match[3] ? Math.min(59, Number(match[3])) : 0;
@@ -267,13 +335,13 @@ type DateHit = { index: number; length: number; iso: string };
 /**
  * 날짜 두 개가 한 문장에 나올 때 두 번째 날짜는 "30일"처럼 월을 생략하고 적는 경우가 많다
  * (예: "9월15일 설치 30일 회수"). 그래서 앞서 나온 월을 기억해두었다가 월이 생략된
- * "D일" 표기에도 적용한다. 문맥(월 정보)이 전혀 없으면 잘못 추측하지 않고 건너뛴다.
+ * "D일" 표기에도 적용한다. 앞에 월이 없으면 기준일의 달로 본다.
  */
 function findAllDateHits(message: string, reference: Date): DateHit[] {
   const hits: DateHit[] = [];
   let currentMonth: number | null = null;
 
-  const pattern = /(\d{1,2})\s*\/\s*(\d{1,2})|(\d{1,2})\s*월\s*(\d{1,2})\s*일|(\d{1,2})\s*일/g;
+  const pattern = /(\d{1,2})\s*\/\s*(\d{1,2})|(\d{1,2})\s*월\s*(\d{1,2})\s*일|(?<!\d)(\d{1,2})\s*일(?![정자시\d])/g;
 
   for (const match of message.matchAll(pattern)) {
     const index = match.index ?? 0;
@@ -296,12 +364,16 @@ function findAllDateHits(message: string, reference: Date): DateHit[] {
         length: match[0].length,
         iso: toIsoDate(rollToFutureYear(month, Number(match[4]), reference)),
       });
-    } else if (match[5] !== undefined && currentMonth !== null) {
-      // 월 없이 "D일"만 있는 경우 — 앞서 나온 월을 그대로 사용한다.
+    } else if (match[5] !== undefined) {
+      const day = Number(match[5]);
+      if (day < 1 || day > 31) continue;
       hits.push({
         index,
         length: match[0].length,
-        iso: toIsoDate(rollToFutureYear(currentMonth, Number(match[5]), reference)),
+        iso:
+          currentMonth === null
+            ? toIsoDate(dayOfCurrentOrNextMonth(day, reference))
+            : toIsoDate(rollToFutureYear(currentMonth, day, reference)),
       });
     }
   }
@@ -309,12 +381,36 @@ function findAllDateHits(message: string, reference: Date): DateHit[] {
   return hits.sort((a, b) => a.index - b.index);
 }
 
-function findTimeNear(message: string, position: number): string | null {
-  // 날짜 뒤에 시간이 오는 경우가 대부분이라 뒤쪽을 먼저 본다. 앞쪽까지 뒤지면
-  // 바로 앞 날짜의 시간(예: 설치 시간)을 회수 시간으로 잘못 가져오는 문제가 있었다.
-  const forward = extractTime(message.slice(position, position + 15));
-  if (forward) return forward;
-  return extractTime(message.slice(Math.max(0, position - 15), position));
+type TimeHit = { time: string; start: number; end: number };
+
+function findTimeIn(message: string, from: number, to: number): TimeHit | null {
+  const slice = message.slice(Math.max(0, from), to);
+  const match = slice.match(TIME_PATTERN);
+  if (!match) return null;
+  const time = extractTime(match[0]);
+  if (!time) return null;
+  const start = Math.max(0, from) + (match.index ?? 0);
+  return { time, start, end: start + match[0].length };
+}
+
+/**
+ * 날짜 하나에 붙는 시간을 찾는다. 날짜 뒤에 시간이 오는 경우가 대부분이라 뒤쪽을 먼저 보고,
+ * 앞쪽은 다른 날짜가 이미 가져간 시간이 아닐 때만 쓴다
+ * ("9/14 10시 설치 9/21 회수"에서 회수 시각이 10시를 다시 가져가면 안 된다).
+ */
+function claimTimeNear(message: string, position: number, claimed: TimeHit[]): string | null {
+  const overlaps = (hit: TimeHit) => claimed.some((c) => hit.start < c.end && c.start < hit.end);
+
+  for (const candidate of [
+    findTimeIn(message, position, position + 15),
+    findTimeIn(message, position - 15, position),
+  ]) {
+    if (candidate && !overlaps(candidate)) {
+      claimed.push(candidate);
+      return candidate.time;
+    }
+  }
+  return null;
 }
 
 /**
@@ -332,9 +428,12 @@ export function extractDatetimePair(
     return single ? [`${single}T${extractTime(message) ?? "09:00"}`, null] : [null, null];
   }
 
+  // 날짜를 문장 순서대로 처리해야 앞 날짜가 자기 시간을 먼저 가져간다.
+  const claimed: TimeHit[] = [];
   const toDatetime = (hit: DateHit) =>
-    `${hit.iso}T${findTimeNear(message, hit.index + hit.length) ?? "09:00"}`;
+    `${hit.iso}T${claimTimeNear(message, hit.index + hit.length, claimed) ?? "09:00"}`;
 
-  if (hits.length === 1) return [toDatetime(hits[0]), null];
-  return [toDatetime(hits[0]), toDatetime(hits[1])];
+  const first = toDatetime(hits[0]);
+  if (hits.length === 1) return [first, null];
+  return [first, toDatetime(hits[1])];
 }
