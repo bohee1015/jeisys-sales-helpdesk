@@ -76,10 +76,12 @@ export function extractAllFields(
           break;
         case "equipmentName":
         case "equipmentQty":
+        case "recoveryEquipment":
+          value = extractProductPhrase(message, true);
+          break;
         case "preShipItems":
         case "itemsQty":
         case "item":
-        case "recoveryEquipment":
           value = extractProductPhrase(message);
           break;
         case "neededBy":

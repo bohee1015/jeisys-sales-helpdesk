@@ -26,7 +26,10 @@ const { classifyDetailed, classifyMultipleSubcategories } = require(path.join(OU
 const { findSubcategory } = require(path.join(OUT, "categories.js"));
 const { extractAllFields } = require(path.join(OUT, "fieldExtraction.js"));
 
-const cases = JSON.parse(fs.readFileSync(path.join(__dirname, "nlp-cases.json"), "utf8"));
+// 다른 케이스 파일을 돌려 보고 싶으면 `npm run check:nlp -- --cases 경로` (예: 새로 받은 실제 문장 점검).
+const casesArg = process.argv.indexOf("--cases");
+const casesPath = casesArg !== -1 && process.argv[casesArg + 1] ? process.argv[casesArg + 1] : path.join(__dirname, "nlp-cases.json");
+const cases = JSON.parse(fs.readFileSync(casesPath, "utf8"));
 // 날짜 케이스가 실행일에 따라 흔들리지 않도록 기준일을 고정한다.
 const REFERENCE = new Date(2026, 8, 17);
 
